@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login · Chai Chuski POS</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+  <div class="h-16 w-16 rounded-xl bg-amber-500 text-white flex items-center justify-center text-3xl mb-4">☕</div>
+  <div class="w-full sm:max-w-md bg-white shadow-md rounded-lg px-6 py-6">
+    <h1 class="text-lg font-semibold mb-4 text-center">Chai Chuski POS</h1>
+    <div id="err" class="hidden mb-4 text-sm text-red-600"></div>
+    <form id="loginForm" class="space-y-4">
+      <div><label class="block text-sm font-medium text-gray-700">Email</label>
+        <input id="email" type="email" required autofocus class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"></div>
+      <div><label class="block text-sm font-medium text-gray-700">Password</label>
+        <input id="password" type="password" required class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"></div>
+      <div class="flex justify-between items-center">
+        <button type="button" id="forgot" class="text-xs text-gray-500 underline">Password bhool gaye?</button>
+        <button id="btn" class="px-4 py-2 bg-gray-800 text-white rounded-md text-xs font-semibold uppercase tracking-widest hover:bg-gray-700">Log in</button>
+      </div>
+    </form>
+  </div>
+<script type="module">
+import { auth, $ } from "./js/app.js";
+import { signInWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+onAuthStateChanged(auth, (u) => { if (u) location.href = "pos.html"; });
+const showErr = (m) => { $("err").textContent = m; $("err").classList.remove("hidden"); };
+
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("btn").disabled = true; $("btn").textContent = "...";
+  try { await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value); }
+  catch (err) { showErr("Email ya password ghalat hai."); $("btn").disabled = false; $("btn").textContent = "Log in"; }
+});
+$("forgot").addEventListener("click", async () => {
+  const email = $("email").value.trim();
+  if (!email) return showErr("Pehle upar email likhein.");
+  try { await sendPasswordResetEmail(auth, email); showErr("Password reset ki email bhej di gayi hai."); }
+  catch { showErr("Email nahi bheji ja saki."); }
+});
+</script>
+</body>
+</html>

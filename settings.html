@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-3xl mx-auto py-10 px-4 space-y-6">
+  <div class="bg-white shadow sm:rounded-lg p-6">
+    <h2 class="text-lg font-medium mb-1">Cafe Details</h2>
+    <p class="text-xs text-gray-500 mb-4">Ye receipt par print hoti hain.</p>
+    <form id="cafeForm" class="space-y-3 max-w-md">
+      <input id="cafeName" placeholder="Cafe name" class="w-full border border-gray-300 rounded-md px-3 py-2">
+      <input id="address" placeholder="Address" class="w-full border border-gray-300 rounded-md px-3 py-2">
+      <input id="phone" placeholder="Phone" class="w-full border border-gray-300 rounded-md px-3 py-2">
+      <div class="flex gap-2 items-center text-sm">Shift: <input id="shiftStart" type="number" min="0" max="23" class="w-16 border border-gray-300 rounded px-2 py-1"> baje se
+        <input id="shiftEnd" type="number" min="0" max="23" class="w-16 border border-gray-300 rounded px-2 py-1"> baje tak <span class="text-xs text-gray-400">(24-ghante format)</span></div>
+      <button class="px-4 py-2 bg-gray-800 text-white rounded-md text-xs font-semibold uppercase">Save</button>
+    </form>
+  </div>
+
+  <div class="bg-white shadow sm:rounded-lg p-6">
+    <h2 class="text-lg font-medium mb-1">Order Cancel Password</h2>
+    <p class="text-xs text-gray-500 mb-4" id="cancelStatus"></p>
+    <form id="cancelForm" class="flex gap-2 max-w-md">
+      <input id="cancelPw" type="password" placeholder="Naya cancel password" required class="flex-1 border border-gray-300 rounded-md px-3 py-2">
+      <button class="px-4 py-2 bg-gray-800 text-white rounded-md text-xs font-semibold uppercase">Set</button>
+    </form>
+  </div>
+
+  <div class="bg-white shadow sm:rounded-lg p-6">
+    <h2 class="text-lg font-medium mb-4">Profile &amp; Login Password</h2>
+    <form id="nameForm" class="flex gap-2 max-w-md mb-4">
+      <input id="displayName" placeholder="Aapka naam" class="flex-1 border border-gray-300 rounded-md px-3 py-2">
+      <button class="px-4 py-2 bg-gray-800 text-white rounded-md text-xs font-semibold uppercase">Save</button>
+    </form>
+    <form id="pwForm" class="space-y-3 max-w-md">
+      <input id="curPw" type="password" placeholder="Current Password" required class="w-full border border-gray-300 rounded-md px-3 py-2">
+      <input id="newPw" type="password" placeholder="New Password (min 6)" required class="w-full border border-gray-300 rounded-md px-3 py-2">
+      <button class="px-4 py-2 bg-gray-800 text-white rounded-md text-xs font-semibold uppercase">Change Password</button>
+    </form>
+  </div>
+
+  <div class="bg-white shadow sm:rounded-lg p-6">
+    <h2 class="text-lg font-medium mb-1">Starter Data</h2>
+    <p class="text-xs text-gray-500 mb-4">Chai Chuski ka poora menu (prices ke saath) aur expense categories ek click mein daal dein. Sirf tab chalega jab menu khaali ho.</p>
+    <button id="seedBtn" class="px-4 py-2 bg-amber-500 text-white rounded-md text-sm font-semibold">Chai Chuski Menu Load Karein</button>
+  </div>
+</main>
+<script type="module">
+import { db, auth, requireAuth, $, num, sha256, toast, writeBatch, DEFAULT_SETTINGS } from "./js/app.js";
+import { SEED_MENU, SEED_EXPENSE_CATEGORIES } from "./js/seed.js";
+import { doc, getDoc, setDoc, getDocs, collection, query, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const ref = doc(db, "settings", "app");
+let S;
+requireAuth(async (user) => {
+  const snap = await getDoc(ref);
+  S = { ...DEFAULT_SETTINGS, ...(snap.exists() ? snap.data() : {}) };
+  for (const k of ["cafeName", "address", "phone", "shiftStart", "shiftEnd"]) $(k).value = S[k];
+  $("displayName").value = user.displayName || "";
+  $("cancelStatus").textContent = S.cancelHash ? "Password set hai. Badalne ke liye naya likhein." : "⚠ Abhi koi cancel password set nahi — pehle set karein.";
+});
+
+$("cafeForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await setDoc(ref, { cafeName: $("cafeName").value.trim(), address: $("address").value.trim(), phone: $("phone").value.trim(), shiftStart: num($("shiftStart").value), shiftEnd: num($("shiftEnd").value) }, { merge: true });
+  toast("Cafe details save ho gayi");
+});
+$("cancelForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await setDoc(ref, { cancelHash: await sha256($("cancelPw").value) }, { merge: true });
+  $("cancelPw").value = ""; $("cancelStatus").textContent = "Password set hai. Badalne ke liye naya likhein."; toast("Cancel password set ho gaya");
+});
+$("nameForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); await updateProfile(auth.currentUser, { displayName: $("displayName").value.trim() }); toast("Naam save ho gaya");
+});
+$("pwForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if ($("newPw").value.length < 6) return toast("Naya password kam se kam 6 character", "error");
+  try {
+    await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, $("curPw").value));
+    await updatePassword(auth.currentUser, $("newPw").value);
+    e.target.reset(); toast("Password change ho gaya");
+  } catch { toast("Current password ghalat hai", "error"); }
+});
+$("seedBtn").addEventListener("click", async () => {
+  const existing = await getDocs(query(collection(db, "products"), limit(1)));
+  if (!existing.empty) return toast("Menu pehle se mojood hai", "error");
+  if (!confirm("Chai Chuski ka menu load karna hai?")) return;
+  $("seedBtn").disabled = true;
+  const b = writeBatch(db); let sort = 0;
+  for (const [cat, items] of Object.entries(SEED_MENU)) {
+    const cRef = doc(collection(db, "products"));
+    b.set(cRef, { name: cat, price: 0, stock: 0, parentId: null, ratio: null, sort: sort++ });
+    for (const [name, price] of items) b.set(doc(collection(db, "products")), { name, price, stock: 0, parentId: cRef.id, ratio: null, sort: sort++ });
+  }
+  const cats = await getDocs(query(collection(db, "expenseCategories"), limit(1)));
+  if (cats.empty) SEED_EXPENSE_CATEGORIES.forEach((n, i) => b.set(doc(collection(db, "expenseCategories")), { name: n, sort: i }));
+  await b.commit();
+  toast("Menu load ho gaya!"); setTimeout(() => location.href = "pos.html", 800);
+});
+</script>
+</body>
+</html>

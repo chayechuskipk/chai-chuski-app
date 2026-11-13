@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POS · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+  <div id="editBanner" class="hidden mb-4 rounded-md bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 text-sm"></div>
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2">
+      <h2 class="text-xl font-medium text-gray-700 mb-3">Cafe Menu</h2>
+      <div id="menu" class="space-y-5"><p class="text-gray-500">Loading...</p></div>
+    </div>
+    <div>
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 lg:sticky lg:top-4">
+        <label class="block text-sm font-medium mb-1">Customer (Optional)</label>
+        <div class="relative">
+          <input id="custSearch" type="text" placeholder="Search Name/Phone..." autocomplete="off" class="w-full border border-gray-300 rounded-md px-3 py-2">
+          <div id="custChip" class="hidden w-full border border-green-300 bg-green-50 rounded-md px-3 py-2 justify-between items-center">
+            <span id="custName"></span><button type="button" id="custClear" class="text-red-600 font-bold">X</button>
+          </div>
+          <div id="custResults" class="hidden absolute z-20 left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-64 overflow-auto"></div>
+        </div>
+        <div class="bg-gray-50 rounded-md p-4 mt-4 space-y-3">
+          <select id="orderType" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-white">
+            <option value="dine-in">Dine In</option><option value="takeaway">Take Away</option><option value="delivery">Delivery</option>
+          </select>
+          <div class="grid grid-cols-2 gap-2" id="tableRow">
+            <input id="tableNo" type="text" placeholder="Table #" class="border border-gray-300 rounded-md px-3 py-2">
+            <input id="guests" type="number" min="0" placeholder="Guests" class="border border-gray-300 rounded-md px-3 py-2">
+          </div>
+          <div class="grid grid-cols-3 gap-2 border-t pt-3">
+            <button type="button" data-pay="cash" class="pay-btn rounded-md py-2 text-xs font-semibold border">Cash</button>
+            <button type="button" data-pay="transaction" class="pay-btn rounded-md py-2 text-xs font-semibold border">Transaction</button>
+            <button type="button" data-pay="pay_later" class="pay-btn rounded-md py-2 text-xs font-semibold border" title="Customer select karna zaroori">Pay Later</button>
+          </div>
+          <div><label class="block text-sm">Discount (RS)</label>
+            <input id="discount" type="number" min="0" value="0" class="w-full border border-gray-300 rounded-md px-3 py-2"></div>
+          <div class="text-xl font-semibold">Grand Total: RS <span id="grandTotal">0</span></div>
+        </div>
+        <h3 class="text-lg font-medium mt-5 mb-2">Current Order</h3>
+        <div id="cartList" class="divide-y border-t border-b min-h-[1rem]"></div>
+        <div class="text-xl font-semibold my-4">Total: <span id="subTotal">0</span> PKR</div>
+        <button type="button" id="completeBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-md disabled:opacity-60">Complete Order</button>
+        <div class="border-t mt-5 pt-4">
+          <div class="text-xs font-semibold uppercase text-gray-600 mb-2">Add Custom Item</div>
+          <input id="cName" type="text" placeholder="Name" class="w-full border border-gray-300 rounded-md px-3 py-2 mb-2">
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <input id="cPrice" type="number" placeholder="Price" class="border border-gray-300 rounded-md px-3 py-2">
+            <input id="cQty" type="number" placeholder="Qty" value="1" class="border border-gray-300 rounded-md px-3 py-2">
+          </div>
+          <button type="button" id="cAdd" class="w-full bg-gray-900 text-white rounded-md py-2 text-sm">Add to Order</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script type="module">
+import { db, requireAuth, $, esc, num, money, fmtN, loadProducts, addStockOps, nextOrderNo, nowTs, toast, writeBatch, increment } from "./js/app.js";
+import { doc, getDoc, getDocs, collection } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+let cart = [], customer = null, pay = "cash", P, customers = [], editOrder = null;
+const editId = new URLSearchParams(location.search).get("edit");
+
+requireAuth(async () => {
+  P = await loadProducts();
+  renderMenu();
+  getDocs(collection(db, "customers")).then((s) => customers = s.docs.map((d) => ({ id: d.id, ...d.data() })));
+  if (editId) await loadEdit();
+  render();
+});
+
+function renderMenu() {
+  const menu = $("menu");
+  if (!P.cats.length) { menu.innerHTML = `<p class="text-gray-500">Abhi menu khaali hai. <a class="text-blue-600 underline" href="products.html">Products add karein</a> ya <a class="text-blue-600 underline" href="settings.html">Settings</a> se Chai Chuski ka menu load karein.</p>`; return; }
+  menu.innerHTML = P.cats.map((c) => {
+    const kids = P.children[c.id] || [];
+    const list = kids.length ? kids : [c];
+    return `<div>
+      <button type="button" class="cat-btn w-full text-left px-4 py-4 rounded-md shadow-sm bg-white border border-gray-200 font-semibold uppercase tracking-wide hover:bg-gray-50" data-target="cat${c.id}">${esc(c.name)}</button>
+      <div id="cat${c.id}" class="hidden bg-gray-50 rounded-b-md p-4 grid-cols-2 md:grid-cols-3 gap-3">
+        ${list.map((p) => `<button type="button" class="add-item rounded-md bg-blue-600 hover:bg-blue-700 active:scale-95 transition text-white py-5 px-2 text-center shadow" data-id="${p.id}">
+          <div class="font-semibold text-sm">${esc(p.name)}</div><div class="text-xs opacity-90">${money(p.price)}</div></button>`).join("")}
+      </div></div>`;
+  }).join("");
+  menu.querySelectorAll(".cat-btn").forEach((b) => b.addEventListener("click", () => {
+    const panel = $(b.dataset.target), open = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden", !open); panel.classList.toggle("grid", open);
+    b.classList.toggle("bg-gray-900", open); b.classList.toggle("text-white", open); b.classList.toggle("bg-white", !open);
+  }));
+  menu.querySelectorAll(".add-item").forEach((b) => b.addEventListener("click", () => {
+    const p = P.byId[b.dataset.id];
+    const ex = cart.find((c) => c.productId === p.id);
+    if (ex) ex.qty += 1; else cart.push({ productId: p.id, name: p.name, price: num(p.price), qty: 1 });
+    render();
+  }));
+}
+
+async function loadEdit() {
+  const s = await getDoc(doc(db, "orders", editId));
+  if (!s.exists() || s.data().status !== "pending") { toast("Sirf pending order modify ho sakta hai", "error"); setTimeout(() => location.href = "orders.html", 1200); return; }
+  editOrder = { id: s.id, ...s.data() };
+  cart = editOrder.items.map((i) => ({ ...i }));
+  $("orderType").value = editOrder.orderType; $("tableNo").value = editOrder.tableNo || ""; $("guests").value = editOrder.guests || "";
+  $("discount").value = num(editOrder.discount); pay = editOrder.payment;
+  if (editOrder.customerId) selectCustomer({ id: editOrder.customerId, name: editOrder.customerName });
+  $("editBanner").innerHTML = `Modifying Order <b>#${editOrder.no}</b> — <a class="underline" href="orders.html">wapis jayein</a>`;
+  $("editBanner").classList.remove("hidden");
+  $("completeBtn").textContent = "Update Order";
+}
+
+function render() {
+  const list = $("cartList"); list.innerHTML = "";
+  cart.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "flex items-center justify-between py-3 gap-2";
+    row.innerHTML = `<div class="text-sm flex-1"><div>${esc(c.name)}</div><div class="text-xs text-gray-500">${fmtN(c.price)} × ${fmtN(c.qty)} = ${fmtN(c.price * c.qty)}</div></div>
+      <input type="number" min="1" value="${c.qty}" class="w-14 border border-gray-300 rounded px-2 py-1 text-sm">
+      <button type="button" class="text-red-500 text-sm px-1">×</button>`;
+    row.querySelector("input").addEventListener("change", (e) => { const v = +e.target.value; if (v > 0) c.qty = v; else cart.splice(i, 1); render(); });
+    row.querySelector("button").addEventListener("click", () => { cart.splice(i, 1); render(); });
+    list.appendChild(row);
+  });
+  const sub = cart.reduce((s, c) => s + c.price * c.qty, 0);
+  const disc = Math.max(0, num($("discount").value));
+  $("subTotal").textContent = fmtN(sub);
+  $("grandTotal").textContent = fmtN(Math.max(0, sub - disc));
+  document.querySelectorAll(".pay-btn").forEach((b) => {
+    const on = b.dataset.pay === pay;
+    b.className = "pay-btn rounded-md py-2 text-xs font-semibold border " + (on ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-800 border-gray-200");
+    if (b.dataset.pay === "pay_later") { b.disabled = !customer; b.classList.toggle("opacity-40", !customer); }
+  });
+  $("tableRow").style.display = $("orderType").value === "dine-in" ? "" : "none";
+}
+$("discount").addEventListener("input", render);
+$("orderType").addEventListener("change", render);
+document.querySelectorAll(".pay-btn").forEach((b) => b.addEventListener("click", () => { pay = b.dataset.pay; render(); }));
+
+$("cAdd").addEventListener("click", () => {
+  const name = $("cName").value.trim(), price = num($("cPrice").value), qty = num($("cQty").value) || 1;
+  if (!name || $("cPrice").value === "") return alert("Name aur price likhein");
+  cart.push({ productId: null, name, price, qty });
+  $("cName").value = ""; $("cPrice").value = ""; $("cQty").value = 1; render();
+});
+
+/* customer search */
+$("custSearch").addEventListener("input", (e) => {
+  const v = e.target.value.trim().toLowerCase(), box = $("custResults");
+  if (!v) return box.classList.add("hidden");
+  const res = customers.filter((c) => (c.name || "").toLowerCase().includes(v) || (c.phone || "").includes(v)).slice(0, 10);
+  box.innerHTML = res.length ? "" : '<div class="px-3 py-2 text-sm text-gray-500">Koi customer nahi mila</div>';
+  res.forEach((c) => {
+    const d = document.createElement("div");
+    d.className = "px-3 py-2 hover:bg-gray-100 cursor-pointer border-b last:border-0";
+    d.innerHTML = `<div class="text-sm">${esc(c.name)}</div><div class="text-xs text-gray-500">${esc(c.phone)}</div>`;
+    d.addEventListener("click", () => selectCustomer(c));
+    box.appendChild(d);
+  });
+  box.classList.remove("hidden");
+});
+function selectCustomer(c) {
+  customer = c; $("custName").textContent = c.name;
+  $("custChip").classList.remove("hidden"); $("custChip").classList.add("flex");
+  $("custSearch").classList.add("hidden"); $("custResults").classList.add("hidden");
+  render();
+}
+$("custClear").addEventListener("click", () => {
+  customer = null; if (pay === "pay_later") pay = "cash";
+  $("custChip").classList.add("hidden"); $("custChip").classList.remove("flex");
+  $("custSearch").classList.remove("hidden"); $("custSearch").value = ""; render();
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#custResults") && e.target !== $("custSearch")) $("custResults").classList.add("hidden"); });
+
+/* save */
+$("completeBtn").addEventListener("click", async () => {
+  if (!cart.length) return alert("Order khaali hai");
+  const type = $("orderType").value;
+  if (type === "dine-in" && !$("tableNo").value.trim()) return alert("Table # likhein");
+  if (pay === "pay_later" && !customer) return alert("Pay Later ke liye customer select karein");
+  const btn = $("completeBtn"); btn.disabled = true; btn.textContent = "Processing...";
+  const printWin = window.open("", "_blank"); // popup blocker se bachne ke liye pehle khol lo
+  try {
+    const items = cart.map((c) => ({ productId: c.productId || null, name: c.name, price: num(c.price), qty: num(c.qty) }));
+    const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+    const discount = Math.min(Math.max(0, num($("discount").value)), subtotal);
+    const data = {
+      customerId: customer?.id || null, customerName: customer?.name || null,
+      orderType: type, tableNo: type === "dine-in" ? $("tableNo").value.trim() : null,
+      guests: type === "dine-in" && $("guests").value !== "" ? num($("guests").value) : null,
+      payment: pay, items, subtotal, discount, total: subtotal - discount, isPaid: pay !== "pay_later"
+    };
+    const batch = writeBatch(db);
+    let id;
+    if (editOrder) {
+      id = editOrder.id;
+      addStockOps(batch, editOrder.items, +1, P.byId);
+      batch.update(doc(db, "orders", id), data);
+      if (editOrder.customerId !== data.customerId) {
+        if (editOrder.customerId) batch.update(doc(db, "customers", editOrder.customerId), { orderCount: increment(-1) });
+        if (data.customerId) batch.update(doc(db, "customers", data.customerId), { orderCount: increment(1) });
+      }
+    } else {
+      const ref = doc(collection(db, "orders")); id = ref.id;
+      batch.set(ref, { ...data, no: await nextOrderNo(), status: "pending", createdAt: nowTs(), completedAt: null, paidAt: null });
+      if (data.customerId) batch.update(doc(db, "customers", data.customerId), { orderCount: increment(1) });
+    }
+    addStockOps(batch, items, -1, P.byId);
+    batch.commit().catch((e) => toast("Sync error: " + e.message, "error")); // offline mein bhi queue ho jata hai
+    if (printWin) printWin.location.href = "print.html?id=" + id;
+    if (editOrder) { setTimeout(() => location.href = "orders.html", 400); return; }
+    toast("Order save ho gaya");
+    cart = []; $("discount").value = 0; $("tableNo").value = ""; $("guests").value = "";
+    if (customer) $("custClear").click();
+    pay = "cash"; P = await loadProducts(); render();
+  } catch (err) { printWin?.close(); toast("Order save nahi hua: " + err.message, "error"); }
+  btn.disabled = false; btn.textContent = editOrder ? "Update Order" : "Complete Order";
+});
+</script>
+</body>
+</html>

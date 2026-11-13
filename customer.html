@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-4xl mx-auto py-6 px-4">
+  <a href="customers.html" class="text-sm text-blue-600">&larr; Customers</a>
+  <div class="bg-white shadow-sm rounded-lg p-6 mt-2" id="box">Loading...</div>
+</main>
+<script type="module">
+import { db, requireAuth, $, esc, num, money, fmtDate } from "./js/app.js";
+import { doc, getDoc, getDocs, collection, query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+requireAuth(async () => {
+  const id = new URLSearchParams(location.search).get("id");
+  const c = await getDoc(doc(db, "customers", id));
+  if (!c.exists()) { location.href = "customers.html"; return; }
+  const cu = c.data();
+  const orders = (await getDocs(query(collection(db, "orders"), where("customerId", "==", id)))).docs
+    .map((d) => ({ id: d.id, ...d.data() })).filter((o) => o.status !== "cancelled").sort((a, b) => b.no - a.no);
+  const spent = orders.reduce((s, o) => s + num(o.total), 0);
+  const debt = orders.reduce((s, o) => s + (o.isPaid ? 0 : num(o.total)), 0);
+  document.title = cu.name + " · Chai Chuski";
+  $("box").innerHTML = `
+    <h2 class="text-xl font-semibold">${esc(cu.name)}</h2>
+    <div class="text-sm text-gray-500">${esc(cu.phone)} ${cu.email ? "· " + esc(cu.email) : ""}</div>
+    <div class="grid grid-cols-3 gap-3 my-5">
+      <div class="bg-gray-50 rounded p-3"><div class="text-xs text-gray-500">Orders</div><div class="text-lg font-semibold">${orders.length}</div></div>
+      <div class="bg-gray-50 rounded p-3"><div class="text-xs text-gray-500">Total Spent</div><div class="text-lg font-semibold">${money(spent)}</div></div>
+      <div class="bg-gray-50 rounded p-3"><div class="text-xs text-gray-500">Pending Debt</div><div class="text-lg font-semibold ${debt > 0 ? "text-red-600" : "text-green-600"}">${money(debt)}</div></div>
+    </div>
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50"><tr class="text-left"><th class="p-2">Order</th><th class="p-2">Date</th><th class="p-2">Amount</th><th class="p-2">Status</th><th class="p-2"></th></tr></thead>
+      <tbody>${orders.map((o) => `<tr class="border-t"><td class="p-2">#${o.no}</td><td class="p-2">${fmtDate(o.createdAt)}</td><td class="p-2">${money(o.total)}</td>
+        <td class="p-2">${o.isPaid ? '<span class="text-green-600">Paid</span>' : '<span class="text-red-600">Unpaid</span>'} <span class="text-xs text-gray-400">(${o.status})</span></td>
+        <td class="p-2"><a target="_blank" href="print.html?id=${o.id}" class="text-green-700">🖨</a></td></tr>`).join("")
+        || `<tr><td colspan="5" class="p-3 text-gray-500">Abhi koi order nahi.</td></tr>`}</tbody>
+    </table>`;
+});
+</script>
+</body>
+</html>

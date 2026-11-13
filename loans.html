@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage Loan · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-6xl mx-auto py-10 px-4">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-2xl font-semibold text-orange-600">Active Loans / Pay Later</h2>
+    <div class="text-sm">Total Due: <b class="text-red-600" id="total"></b></div>
+  </div>
+  <div class="bg-white shadow-sm rounded-lg p-6 overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50"><tr class="text-left"><th class="p-3">Order ID</th><th class="p-3">Customer Name</th><th class="p-3">Date</th><th class="p-3">Total Amount</th><th class="p-3">Actions</th></tr></thead>
+      <tbody id="body"><tr><td class="p-4 text-gray-500" colspan="5">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script type="module">
+import { db, requireAuth, $, esc, num, money, fmtDate, toast, nowTs } from "./js/app.js";
+import { collection, query, where, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+let loans = [];
+requireAuth(() => {
+  onSnapshot(query(collection(db, "orders"), where("isPaid", "==", false)), (snap) => {
+    loans = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((o) => o.status !== "cancelled").sort((a, b) => a.no - b.no);
+    $("total").textContent = money(loans.reduce((s, o) => s + num(o.total), 0));
+    $("body").innerHTML = loans.map((o) => `<tr class="border-t">
+      <td class="p-3 font-semibold">#${o.no}</td>
+      <td class="p-3"><a class="hover:underline" href="customer.html?id=${o.customerId}">${esc(o.customerName)}</a></td>
+      <td class="p-3">${fmtDate(o.createdAt, false)}</td>
+      <td class="p-3">${money(o.total)}</td>
+      <td class="p-3"><div class="flex gap-1">
+        <select id="m${o.id}" class="border border-gray-300 rounded text-xs px-1"><option value="cash">Cash</option><option value="transaction">Transaction</option></select>
+        <button data-pay="${o.id}" class="bg-green-600 text-white text-xs px-3 py-1 rounded">Mark as Paid</button></div></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="p-4 text-gray-500">Koi active loan nahi.</td></tr>`;
+  });
+});
+$("body").addEventListener("click", async (e) => {
+  const id = e.target.dataset.pay; if (!id) return;
+  const o = loans.find((l) => l.id === id);
+  if (!confirm(`Order #${o.no} paid mark karna hai?`)) return;
+  await updateDoc(doc(db, "orders", id), { isPaid: true, paidAt: nowTs(), payment: $("m" + id).value });
+  toast(`Order #${o.no} paid mark ho gaya`);
+});
+</script>
+</body>
+</html>

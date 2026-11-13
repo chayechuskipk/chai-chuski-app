@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Sirf in emails wale log data dekh/badal sakte hain.
+    // Naya staff add karna ho to email is list mein daal dein.
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in ['chayechuski.pk@gmail.com'];
+    }
+    match /{document=**} {
+      allow read, write: if isStaff();
+    }
+  }
+}

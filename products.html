@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage Products · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  <h2 class="text-2xl font-semibold mb-4">Add New Product</h2>
+  <form id="addForm" class="bg-white border border-gray-200 rounded-md p-4 flex flex-wrap gap-2 mb-8">
+    <input id="pName" placeholder="Product Name" required class="border border-gray-300 rounded px-3 py-2 flex-1 min-w-[150px]">
+    <input id="pPrice" type="number" step="0.01" placeholder="Price" class="border border-gray-300 rounded px-3 py-2 w-32">
+    <input id="pStock" type="number" step="0.01" placeholder="Initial Stock" class="border border-gray-300 rounded px-3 py-2 w-32">
+    <select id="pParent" class="border border-gray-300 rounded px-3 py-2"></select>
+    <input id="pRatio" type="number" step="0.001" placeholder="Conversion Ratio (e.g. 0.25)" class="border border-gray-300 rounded px-3 py-2 w-52">
+    <button class="bg-blue-600 text-white px-4 py-2 rounded">Add Product</button>
+  </form>
+  <h3 class="text-xl mb-2">Current Menu</h3>
+  <div class="bg-white border border-gray-200 rounded-md overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50"><tr><th class="p-3 text-center">Product Name</th><th class="p-3">Price</th><th class="p-3">Stock</th><th class="p-3">Actions</th></tr></thead>
+      <tbody id="body"><tr><td class="p-4 text-gray-500" colspan="4">Loading...</td></tr></tbody>
+    </table>
+  </div>
+  <p class="text-xs text-gray-500 mt-3">Tip: Category banane ke liye parent khaali chhorein. Sub-product ka "Conversion Ratio" set ho to bechne par parent ka stock bhi utna kam hoga.</p>
+</main>
+<script type="module">
+import { db, requireAuth, $, esc, num, money, loadProducts, toast, increment } from "./js/app.js";
+import { collection, addDoc, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+let P;
+requireAuth(refresh);
+
+async function refresh() {
+  P = await loadProducts();
+  $("pParent").innerHTML = `<option value="">-- Is this a Sub-Product? (Select Parent) --</option>` + P.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const row = (p, child) => `
+    <tr class="border-t ${child ? "" : "bg-gray-50 font-semibold"}">
+      <td class="p-3 ${child ? "ps-8 text-blue-600" : ""}">
+        <span id="v${p.id}">${child ? "↳ " : ""}${esc(p.name)}${p.ratio ? ` <span class="text-xs text-gray-400">(×${p.ratio})</span>` : ""}</span>
+        <span id="e${p.id}" class="hidden gap-1"><input id="en${p.id}" value="${esc(p.name)}" class="border rounded px-2 py-1 text-sm w-40">
+          <input id="ep${p.id}" type="number" step="0.01" value="${num(p.price)}" class="border rounded px-2 py-1 text-sm w-24">
+          <button data-save="${p.id}" class="bg-blue-600 text-white text-xs px-2 rounded">Save</button></span>
+      </td>
+      <td class="p-3 text-center">${money(p.price)}</td>
+      <td class="p-3 text-center ${num(p.stock) < 0 ? "text-red-600" : ""}">${num(p.stock).toFixed(2)}</td>
+      <td class="p-3"><div class="flex items-center gap-1">
+        <input type="number" step="0.01" id="r${p.id}" class="border border-gray-300 rounded w-20 px-2 py-1 text-sm">
+        <button data-refill="${p.id}" class="${child ? "bg-blue-500" : "bg-green-500"} text-white text-xs px-2 py-1 rounded">Refill</button>
+        <button data-edit="${p.id}" class="text-xs text-gray-600 underline ms-2">Edit</button>
+        <button data-del="${p.id}" class="text-xs text-red-600 underline ms-1">Delete</button>
+      </div></td>
+    </tr>`;
+  $("body").innerHTML = P.cats.map((c) => row(c, false) + (P.children[c.id] || []).map((k) => row(k, true)).join("")).join("")
+    || `<tr><td class="p-4 text-gray-500" colspan="4">Koi product nahi. Settings se Chai Chuski ka menu load kar sakte hain.</td></tr>`;
+}
+
+$("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("pName").value.trim(); if (!name) return;
+  const parentId = $("pParent").value || null;
+  const maxSort = Math.max(0, ...P.all.map((p) => num(p.sort)));
+  await addDoc(collection(db, "products"), {
+    name, price: num($("pPrice").value), stock: num($("pStock").value), parentId,
+    ratio: $("pRatio").value !== "" ? num($("pRatio").value) : null, sort: maxSort + 1
+  });
+  e.target.reset(); toast(`'${name}' add ho gaya`); refresh();
+});
+
+$("body").addEventListener("click", async (e) => {
+  const d = e.target.dataset;
+  if (d.refill) {
+    const q = num($("r" + d.refill).value); if (!q) return;
+    await updateDoc(doc(db, "products", d.refill), { stock: increment(q) }); toast("Stock refill ho gaya"); refresh();
+  } else if (d.edit) {
+    $("v" + d.edit).classList.toggle("hidden"); $("e" + d.edit).classList.toggle("hidden"); $("e" + d.edit).classList.toggle("inline-flex");
+  } else if (d.save) {
+    await updateDoc(doc(db, "products", d.save), { name: $("en" + d.save).value.trim(), price: num($("ep" + d.save).value) }); toast("Product update ho gaya"); refresh();
+  } else if (d.del) {
+    if ((P.children[d.del] || []).length) return toast("Pehle is category ke items delete karein", "error");
+    if (!confirm("Delete karna hai?")) return;
+    await deleteDoc(doc(db, "products", d.del)); toast("Product delete ho gaya"); refresh();
+  }
+});
+</script>
+</body>
+</html>

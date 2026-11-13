@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Receipt</title>
+<style>
+  body { font-family: 'Courier New', monospace; font-size: 12px; width: 300px; margin: 0; padding: 8px; color: #000; }
+  .c { text-align: center; } h2 { margin: 4px 0 8px; font-size: 18px; } p { margin: 6px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; border-bottom: 1px dashed #000; }
+  td { padding: 2px 0; vertical-align: top; } td.q { width: 30px; text-align: center; } td.a { width: 70px; text-align: right; }
+  .tot { font-weight: bold; font-size: 14px; margin: 6px 0; }
+  .invisible { visibility: hidden; }
+  @media print { .np { display: none; } @page { margin: 0; } }
+</style></head>
+<body class="invisible">
+<div id="r">Loading...</div>
+<div class="c np" style="margin-top:10px"><button onclick="window.print()">Print</button> <button onclick="window.close()">Close</button></div>
+<script type="module">
+import { db, requireAuth, esc, num, orderLabel, PAY_LABEL, toDate } from "./js/app.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+requireAuth(async (user, s) => {
+  const snap = await getDoc(doc(db, "orders", new URLSearchParams(location.search).get("id")));
+  if (!snap.exists()) { document.getElementById("r").textContent = "Order nahi mila"; return; }
+  const o = snap.data(), d = toDate(o.createdAt);
+  const p2 = (n) => String(n).padStart(2, "0");
+  const type = { "dine-in": "Dine-in", takeaway: "Take Away", delivery: "Delivery" }[o.orderType];
+  document.title = "Receipt #" + o.no;
+  document.getElementById("r").innerHTML = `
+    <div class="c"><h2>${esc(s.cafeName)}</h2><div>${esc(s.address)}</div><p>📞 ${esc(s.phone)}</p>
+    <p>${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}</p></div>
+    <div><b>Order #:</b> ${o.no}</div>
+    <div><b>Order Type:</b> ${type}</div>
+    ${o.orderType === "dine-in" ? `<div><b>Table:</b> ${esc(o.tableNo)}${o.guests ? ` &nbsp; <b>Guests:</b> ${o.guests}` : ""}</div>` : ""}
+    ${o.customerName ? `<div><b>Customer:</b> ${esc(o.customerName)}</div>` : ""}
+    <table>${o.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="q">${i.qty}</td><td class="a">RS ${(i.price * i.qty).toLocaleString()}</td></tr>`).join("")}</table>
+    <div class="tot">Subtotal: RS ${num(o.subtotal).toFixed(2)}</div>
+    ${num(o.discount) > 0 ? `<div class="tot">Discount: RS ${num(o.discount).toLocaleString()}</div>` : ""}
+    <div class="tot">Grand Total: RS ${num(o.total).toLocaleString()}</div>
+    <div>Payment: ${PAY_LABEL[o.payment] || ""}</div>
+    <p class="c">Thank You!</p>`;
+  setTimeout(() => window.print(), 300);
+}, { nav: false });
+</script>
+</body></html>

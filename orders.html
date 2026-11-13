@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order History · Chai Chuski</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="font-sans antialiased bg-gray-100 text-gray-900 invisible">
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+  <div class="bg-white shadow-sm rounded-lg p-6">
+    <h2 class="text-xl font-semibold text-amber-600 mb-4">Pending Orders</h2>
+    <div class="overflow-x-auto"><table class="min-w-full text-sm">
+      <thead class="bg-gray-50"><tr class="text-left"><th class="p-3">Order ID</th><th class="p-3">Total Amount</th><th class="p-3">Table Number/Order Type</th><th class="p-3">Actions</th><th class="p-3">Print</th><th class="p-3">Cancel</th></tr></thead>
+      <tbody id="pendingBody"><tr><td class="p-4 text-gray-500" colspan="6">Loading...</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div>
+    <h3 class="text-lg font-semibold mb-3">Filter Sales by Date &amp; Time</h3>
+    <form id="filterForm" class="flex flex-wrap items-end gap-3">
+      <div><label class="block text-sm">From</label><input type="datetime-local" id="fFrom" class="border border-gray-300 rounded-md px-3 py-2"></div>
+      <div><label class="block text-sm">To</label><input type="datetime-local" id="fTo" class="border border-gray-300 rounded-md px-3 py-2"></div>
+      <div>
+        <div class="flex gap-1 mb-1">
+          <button type="button" id="bToday" class="bg-blue-600 text-white px-3 py-2 rounded-md text-sm">Today</button>
+          <button type="button" id="bYesterday" class="bg-blue-600 text-white px-3 py-2 rounded-md text-sm">Yesterday</button>
+        </div>
+        <label class="block text-sm">Table/Type</label>
+        <select id="fTable" class="border border-gray-300 rounded-md px-3 py-2"><option value="">All Tables &amp; Types</option><option value="take_away">Take Away / Delivery</option></select>
+      </div>
+      <button class="bg-blue-600 text-white px-4 py-2 rounded-md">Apply Filter</button>
+      <button type="button" id="bReset" class="bg-gray-500 text-white px-4 py-2 rounded-md">Reset</button>
+    </form>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3" id="summary"></div>
+
+  <div class="bg-white shadow-sm rounded-lg p-6">
+    <h2 class="text-xl font-semibold mb-4">Completed Sales (Locked)</h2>
+    <div class="overflow-x-auto"><table class="min-w-full text-sm">
+      <thead class="bg-gray-50"><tr class="text-left"><th class="p-3">Order ID</th><th class="p-3">Date/Time</th><th class="p-3">Table Number/Order Type</th><th class="p-3">Total Amount</th><th class="p-3">Discount</th><th class="p-3">After Discount</th><th class="p-3">Action</th><th class="p-3">Print</th></tr></thead>
+      <tbody id="doneBody"></tbody>
+    </table></div>
+  </div>
+</main>
+<script type="module">
+import { db, requireAuth, $, esc, num, money, fmtDate, toLocalInput, shiftRange, orderLabel, PAY_LABEL, sha256, nowTs, tsFrom, loadProducts, addStockOps, toast, writeBatch, increment } from "./js/app.js";
+import { collection, query, where, getDocs, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+let S, pending = [];
+requireAuth(async (user, settings) => {
+  S = settings;
+  onSnapshot(query(collection(db, "orders"), where("status", "==", "pending")), (snap) => {
+    pending = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.no - b.no);
+    renderPending();
+  });
+  setRange(0, false);
+  await loadCompleted();
+});
+
+function renderPending() {
+  $("pendingBody").innerHTML = pending.length ? pending.map((o) => `
+    <tr class="border-t">
+      <td class="p-3 font-semibold">#${o.no}</td>
+      <td class="p-3">${money(o.total)}</td>
+      <td class="p-3 font-semibold">${esc(orderLabel(o))}${o.customerName ? `<div class="text-xs font-normal text-gray-500">${esc(o.customerName)}</div>` : ""}</td>
+      <td class="p-3 whitespace-nowrap">
+        <a href="pos.html?edit=${o.id}" class="inline-block bg-blue-600 text-white px-3 py-1 rounded text-sm">Modify</a>
+        <button data-complete="${o.id}" class="bg-green-600 text-white px-3 py-1 rounded text-sm">Complete</button>
+      </td>
+      <td class="p-3"><a target="_blank" href="print.html?id=${o.id}" class="text-green-700">🖨 Print</a></td>
+      <td class="p-3"><div class="flex gap-1">
+        <input type="password" data-pw="${o.id}" placeholder="Enter password" class="border border-gray-300 rounded px-2 py-1 w-28 text-sm">
+        <button data-cancel="${o.id}" class="bg-red-600 text-white px-2 py-1 rounded text-sm whitespace-nowrap">Cancel Order</button></div></td>
+    </tr>`).join("") : `<tr><td colspan="6" class="p-4 text-gray-500">Koi pending order nahi.</td></tr>`;
+}
+
+$("pendingBody").addEventListener("click", async (e) => {
+  const cId = e.target.dataset.complete, xId = e.target.dataset.cancel;
+  if (cId) {
+    const b = writeBatch(db); b.update(doc(db, "orders", cId), { status: "completed", completedAt: nowTs() });
+    await b.commit(); toast("Order complete ho gaya"); loadCompleted();
+  }
+  if (xId) {
+    const o = pending.find((p) => p.id === xId);
+    const pw = document.querySelector(`[data-pw="${xId}"]`).value;
+    if (!S.cancelHash) return toast("Pehle Settings mein cancel password set karein", "error");
+    if ((await sha256(pw)) !== S.cancelHash) return toast("Cancel password ghalat hai", "error");
+    if (!confirm(`Order #${o.no} cancel karna hai?`)) return;
+    const P = await loadProducts();
+    const b = writeBatch(db);
+    addStockOps(b, o.items, +1, P.byId);
+    b.update(doc(db, "orders", xId), { status: "cancelled" });
+    if (o.customerId) b.update(doc(db, "customers", o.customerId), { orderCount: increment(-1) });
+    await b.commit(); toast(`Order #${o.no} cancel ho gaya`);
+  }
+});
+
+function setRange(daysBack, reload = true) {
+  const [f, t] = shiftRange(S, daysBack);
+  $("fFrom").value = toLocalInput(f); $("fTo").value = toLocalInput(t);
+  if (reload) loadCompleted();
+}
+$("bToday").onclick = () => setRange(0);
+$("bYesterday").onclick = () => setRange(1);
+$("bReset").onclick = () => { $("fTable").value = ""; setRange(0); };
+$("filterForm").addEventListener("submit", (e) => { e.preventDefault(); loadCompleted(); });
+
+async function loadCompleted() {
+  const from = new Date($("fFrom").value), to = new Date($("fTo").value); to.setSeconds(59);
+  const snap = await getDocs(query(collection(db, "orders"), where("completedAt", ">=", tsFrom(from)), where("completedAt", "<=", tsFrom(to))));
+  let list = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((o) => o.status === "completed");
+  // table dropdown
+  const tables = [...new Set(list.filter((o) => o.orderType === "dine-in" && o.tableNo).map((o) => o.tableNo))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const sel = $("fTable"), cur = sel.value;
+  sel.innerHTML = `<option value="">All Tables &amp; Types</option><option value="take_away">Take Away / Delivery</option>` + tables.map((t) => `<option value="${esc(t)}">Table ${esc(t)}</option>`).join("");
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "";
+  if (sel.value === "take_away") list = list.filter((o) => o.orderType !== "dine-in");
+  else if (sel.value) list = list.filter((o) => o.orderType === "dine-in" && o.tableNo === sel.value);
+  list.sort((a, b) => b.completedAt.toMillis() - a.completedAt.toMillis());
+
+  const sum = { sub: 0, disc: 0, total: 0, cash: 0, transaction: 0, pay_later: 0 };
+  list.forEach((o) => { sum.sub += num(o.subtotal); sum.disc += num(o.discount); sum.total += num(o.total); sum[o.payment] = (sum[o.payment] || 0) + num(o.total); });
+  $("summary").innerHTML = [["Total Sale", sum.total], ["Cash", sum.cash], ["Transaction", sum.transaction], ["Pay Later", sum.pay_later]]
+    .map(([l, v]) => `<div class="bg-white rounded-lg shadow-sm p-4"><div class="text-xs text-gray-500">${l}</div><div class="text-xl font-semibold">${money(v)}</div></div>`).join("");
+  $("doneBody").innerHTML = list.map((o) => `
+    <tr class="border-t">
+      <td class="p-3 font-semibold">#${o.no}</td>
+      <td class="p-3 whitespace-nowrap">${fmtDate(o.completedAt)}</td>
+      <td class="p-3">${esc(orderLabel(o))} <span class="text-xs text-gray-500">· ${PAY_LABEL[o.payment] || ""}</span></td>
+      <td class="p-3">${money(o.subtotal)}</td><td class="p-3">${money(o.discount)}</td><td class="p-3 font-semibold">${money(o.total)}</td>
+      <td class="p-3"><button type="button" class="text-blue-600 underline" onclick="document.getElementById('it${o.id}').classList.toggle('hidden')">View</button></td>
+      <td class="p-3"><a target="_blank" href="print.html?id=${o.id}" class="text-green-700">🖨 Print</a></td>
+    </tr>
+    <tr id="it${o.id}" class="hidden bg-gray-50"><td colspan="8" class="px-6 py-2 text-xs">
+      ${o.items.map((i) => `<div>${esc(i.name)} × ${i.qty} = ${money(i.price * i.qty)}</div>`).join("")}
+      ${o.customerName ? `<div class="text-gray-500 mt-1">Customer: ${esc(o.customerName)}</div>` : ""}</td></tr>`).join("") + `
+    <tr class="border-t-2 font-bold bg-gray-50"><td class="p-3" colspan="3">TOTAL (${list.length} orders)</td>
+      <td class="p-3">${money(sum.sub)}</td><td class="p-3">${money(sum.disc)}</td><td class="p-3">${money(sum.total)}</td><td colspan="2"></td></tr>`;
+}
+</script>
+</body>
+</html>
